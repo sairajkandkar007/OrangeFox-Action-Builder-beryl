@@ -37,7 +37,7 @@ jobs:
     steps:
       - name: Free Disk Space & Configure Swap
         run: |
-          echo "=== Cleaning preinstalled runner runtimes ==="
+          echo "=== Removing unneeded packages and runtimes ==="
           sudo rm -rf \
             /usr/share/dotnet \
             /usr/local/lib/android \
@@ -49,13 +49,15 @@ jobs:
             /usr/share/doc || true
           sudo apt-get clean
 
-          echo "=== Creating 8GB NVMe swapfile ==="
+          echo "=== Recreating 8GB NVMe swapfile ==="
+          sudo swapoff -a || true
+          sudo rm -f /swapfile
           sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
 
-          echo "=== Storage and Memory Baseline ==="
+          echo "=== Baseline Storage and Memory ==="
           df -h /
           free -h
 
@@ -69,7 +71,7 @@ jobs:
             xsltproc unzip fontconfig python3 python3-pip bc libssl-dev rsync ccache \
             openjdk-11-jdk
 
-          # Run OrangeFox baseline environment setup script
+          # OrangeFox build environment helper script
           git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master ~/ofox_scripts
           sudo bash ~/ofox_scripts/setup/android_build_env.sh
           rm -rf ~/ofox_scripts
@@ -150,7 +152,6 @@ jobs:
           OUT_DIR="${FOX_PATH}/out/target/product/${FOX_BUILD_DEVICE}"
           : > "${GITHUB_WORKSPACE}/build.log"
 
-          # Target vendorbootimage (and the ramdisk-recovery.img binary)
           if command -v mka >/dev/null 2>&1; then
             mka vendorbootimage "${OUT_DIR}/ramdisk-recovery.img" -j"${BUILD_JOBS}" 2>&1 | tee -a "${GITHUB_WORKSPACE}/build.log"
           else
