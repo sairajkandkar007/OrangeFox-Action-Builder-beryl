@@ -63,12 +63,13 @@ jobs:
 
       - name: Setup zram
         run: |
+          sudo apt-get install -y linux-modules-extra-$(uname -r) || sudo apt-get install -y linux-modules-extra-azure
           sudo modprobe zram
           sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap
           sudo sed -i 's/^#PRIORITY=100/PRIORITY=1000/' /etc/default/zramswap
           sudo systemctl restart zramswap
           zramctl
-
+          
       - name: Install repo tool
         run: |
           mkdir -p ~/bin
