@@ -22,8 +22,7 @@ concurrency:
 jobs:
   build:
     name: Build OrangeFox fox_16.0 (beryl)
-    runs-on:
-      labels: ubuntu-24.04-8core
+    runs-on: ubuntu-26.04
     timeout-minutes: 360
 
     env:
@@ -35,6 +34,9 @@ jobs:
       FOX_BUILD_DEVICE: "beryl"
 
     steps:
+      - name: Pandora-style runner cleanup
+        uses: rokibhasansagar/slimhub_actions@main
+
       - name: Inspect runner
         run: |
           set -eux
@@ -63,8 +65,20 @@ jobs:
             unzip fontconfig python3 python-is-python3 git-lfs \
             libssl-dev bc rsync schedtool libwxgtk3.2-dev imagemagick \
             lzop pngcrush schedtool squashfs-tools openjdk-17-jdk \
-            ccache jq wget
+            ccache jq wget \\
+            aria2 linux-modules-extra-$(uname -r) zram-tools
           git lfs install
+          sudo apt-get autoclean >/dev/null || true
+          sudo apt-get autoremove -qy 2>/dev/null || true
+          sudo rm -rf /var/cache/apt/archives/ 2>/dev/null || true
+
+      - name: Setup zram
+        run: |
+          sudo modprobe zram
+          sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap
+          sudo sed -i 's/^#PRIORITY=100/PRIORITY=1000/' /etc/default/zramswap
+          sudo systemctl restart zramswap
+          zramctl
 
       - name: Install repo
         run: |
