@@ -22,7 +22,7 @@ concurrency:
 jobs:
   build:
     name: Build OrangeFox fox_16.0 (beryl)
-    runs-on: ubuntu-26.04
+    runs-on: ubuntu-24.04
     timeout-minutes: 360
 
     env:
@@ -55,25 +55,7 @@ jobs:
           sudo apt-get clean
           df -h
 
-      - name: Install dependencies
-        run: |
-          sudo apt-get update -y
-          sudo apt-get install -y \
-            git-core git-lfs gnupg flex bison build-essential make cmake \
-            zip unzip curl wget aria2 rsync cpio bc bzip2 xz-utils \
-            zlib1g-dev libc6-dev-i386 lib32z1-dev libncurses-dev lib32ncurses-dev \
-            libncurses6 libtinfo6 lib32ncurses6 lib32tinfo6 \
-            libx11-dev x11proto-core-dev libgl1-mesa-dev libxml2-utils xsltproc \
-            libssl-dev libelf-dev liblz4-tool libzstd-dev device-tree-compiler \
-            fontconfig python3 python-is-python3 imagemagick pngcrush \
-            lzop squashfs-tools schedtool openjdk-17-jdk ccache jq \
-            linux-modules-extra-$(uname -r) zram-tools
-          git lfs install
-          sudo apt-get autoclean >/dev/null || true
-          sudo apt-get autoremove -qy 2>/dev/null || true
-          sudo rm -rf /var/cache/apt/archives/ 2>/dev/null || true
-
-      - name: Setup zram
+      - name: Build Environment (Pandora)\n        run: |\n          sudo apt install aria2 linux-modules-extra-$(uname -r) zram-tools -y\n          git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master\n          cd scripts\n          sudo bash setup/android_build_env.sh\n          cd .. && rm -rf scripts\n          sudo apt autoclean >/dev/null || true\n          sudo apt autoremove -qy 2>/dev/null || true\n          sudo rm -rf /var/cache/apt/archives/ 2>/dev/null || true\n\n      - name: Setup zram
         run: |
           sudo modprobe zram
           sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap
