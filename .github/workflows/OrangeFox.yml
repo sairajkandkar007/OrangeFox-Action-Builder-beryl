@@ -117,7 +117,7 @@ jobs:
       - name: Clone device tree
         run: |
           mkdir -p "${FOX_PATH}/device/xiaomi"
-          git clone --depth=1 --branch "${{ inputs.device_tree_ref || 'main' }}" \
+          git clone --depth=1 --branch "${{ inputs.device_tree_ref || 'ofox-16.0' }}" \
             "${DEVICE_TREE_REPO}" "${FOX_PATH}/${DEVICE_TREE_PATH}"
           cd "${FOX_PATH}/${DEVICE_TREE_PATH}"
           git lfs pull || true
