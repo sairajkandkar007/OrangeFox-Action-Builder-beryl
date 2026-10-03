@@ -35,6 +35,17 @@ jobs:
       FOX_BUILD_DEVICE: "beryl"
 
     steps:
+      - name: Inspect runner
+        run: |
+          set -eux
+          echo "=== CPU ==="
+          nproc --all
+          echo "=== MEMORY ==="
+          free -h
+          echo "=== STORAGE ==="
+          df -h /
+          uname -a
+
       - name: Free disk space
         run: |
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
@@ -98,19 +109,12 @@ jobs:
           test -f twrp_beryl.mk || echo "WARNING: twrp_beryl.mk missing (OF build still OK)"
           test -f device.mk
 
-      - name: Prepare OFOX 14.1 AP2A compatibility alias
+      - name: Verify Android 16 BP2A configuration
         run: |
           cd "${FOX_PATH}/${DEVICE_TREE_PATH}"
-          # Keep the source tree itself BP2A. OFOX 14.1 uses AP2A as its
-          # release-config selector for Android 16 device trees.
-          sed -i 's/\\-bp2a-eng/\\-ap2a-eng/g' AndroidProducts.mk
-          grep -n -E 'fox_beryl-(ap2a|bp2a)-eng|twrp_beryl-(ap2a|bp2a)-eng' AndroidProducts.mk
-
-      - name: Verify lunch product registration
-        run: |
-          cd "${FOX_PATH}/${DEVICE_TREE_PATH}"
-          grep -q "fox_beryl" AndroidProducts.mk
-          echo "AndroidProducts.mk OK for OrangeFox"
+          grep -q "fox_beryl-bp2a-eng" AndroidProducts.mk
+          ! grep -q "fox_beryl-ap2a-eng" AndroidProducts.mk
+          echo "BP2A product registration verified."
 
       - name: Configure ccache
         run: |
