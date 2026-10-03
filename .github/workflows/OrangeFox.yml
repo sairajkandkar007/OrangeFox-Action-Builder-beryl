@@ -1,0 +1,144 @@
+# OrangeFox 14.1 builder for Xiaomi Beryl (vendor_boot recovery)
+# Device tree: sairajkandkar007/android_device_xiaomi_beryl_ofox16
+# Lunch: fox_beryl-bp2a-eng
+# Output: vendor_boot.img
+#
+name: OrangeFox-14.1-beryl
+
+on:
+  workflow_dispatch:
+    inputs:
+      device_tree_ref:
+        description: "Device tree branch/tag/SHA"
+        required: false
+        default: "main"
+      build_type:
+        description: "Build type"
+        required: false
+        default: "eng"
+
+concurrency:
+  group: ofox-beryl-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build OrangeFox fox_14.1 (beryl)
+    runs-on: ubuntu-24.04
+    timeout-minutes: 360
+
+    env:
+      FOX_BRANCH: "14.1"
+      FOX_PATH: ${{ github.workspace }}/fox_14.1
+      DEVICE_TREE_REPO: "https://github.com/sairajkandkar007/android_device_xiaomi_beryl_ofox16.git"
+      DEVICE_TREE_PATH: "device/xiaomi/beryl"
+      LUNCH_TARGET: "fox_beryl-bp2a-eng"
+      FOX_BUILD_DEVICE: "beryl"
+
+    steps:
+      - name: Free disk space
+        run: |
+          sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
+            /usr/local/share/boost /usr/share/swift /usr/local/.ghcup || true
+          sudo apt-get clean
+          df -h
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -y
+          sudo apt-get install -y \
+            git-core gnupg flex bison build-essential zip unzip curl \
+            zlib1g-dev libc6-dev-i386 libncurses6 x11proto-core-dev \
+            libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils xsltproc \
+            unzip fontconfig python3 python-is-python3 git-lfs \
+            libssl-dev bc rsync schedtool libwxgtk3.2-dev imagemagick \
+            lzop pngcrush schedtool squashfs-tools openjdk-17-jdk \
+            ccache jq wget
+          git lfs install
+
+      - name: Install repo
+        run: |
+          mkdir -p ~/bin
+          curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o ~/bin/repo
+          chmod a+x ~/bin/repo
+          echo "$HOME/bin" >> $GITHUB_PATH
+
+      - name: Configure git
+        run: |
+          git config --global user.email "builder@github-actions.local"
+          git config --global user.name "OrangeFox Beryl Builder"
+          git config --global color.ui false
+          git config --global trailer.sign.key ""
+
+      - name: Clone OrangeFox sync tooling
+        run: |
+          git clone --depth=1 https://gitlab.com/OrangeFox/sync.git "${{ github.workspace }}/OrangeFox_sync"
+
+      - name: Sync OrangeFox 14.1 sources
+        run: |
+          cd "${{ github.workspace }}/OrangeFox_sync"
+          ./orangefox_sync.sh --branch "${FOX_BRANCH}" --path "${FOX_PATH}"
+
+      - name: Clone device tree
+        run: |
+          mkdir -p "${FOX_PATH}/device/xiaomi"
+          git clone --depth=1 --branch "${{ inputs.device_tree_ref || 'main' }}" \
+            "${DEVICE_TREE_REPO}" "${FOX_PATH}/${DEVICE_TREE_PATH}"
+          cd "${FOX_PATH}/${DEVICE_TREE_PATH}"
+          git lfs pull || true
+          echo "=== Device tree files ==="
+          ls -la
+          test -f BoardConfig.mk
+          test -f AndroidProducts.mk
+          test -f fox_beryl.mk
+          test -f twrp_beryl.mk || echo "WARNING: twrp_beryl.mk missing (OF build still OK)"
+          test -f device.mk
+
+      - name: Verify lunch product registration
+        run: |
+          cd "${FOX_PATH}/${DEVICE_TREE_PATH}"
+          grep -q "fox_beryl" AndroidProducts.mk
+          echo "AndroidProducts.mk OK for OrangeFox"
+
+      - name: Build vendorbootimage
+        run: |
+          cd "${FOX_PATH}"
+          set +e
+          source build/envsetup.sh
+          export ALLOW_MISSING_DEPENDENCIES=true
+          export LC_ALL=C
+          export FOX_BUILD_DEVICE="${FOX_BUILD_DEVICE}"
+          lunch "${LUNCH_TARGET}"
+          mka adbd vendorbootimage -j"$(nproc --all)"
+          RC=$?
+          set -e
+          if [ $RC -ne 0 ]; then
+            echo "Build failed with exit code $RC"
+            exit $RC
+          fi
+
+      - name: Collect artifacts
+        if: success()
+        run: |
+          OUT="${FOX_PATH}/out/target/product/beryl"
+          mkdir -p "${{ github.workspace }}/artifacts"
+          if [ -f "${OUT}/vendor_boot.img" ]; then
+            cp -v "${OUT}/vendor_boot.img" "${{ github.workspace }}/artifacts/"
+          else
+            echo "ERROR: vendor_boot.img not found"
+            find "${FOX_PATH}/out/target/product" -name "*.img" 2>/dev/null | head -50
+            exit 1
+          fi
+          for f in recovery.img boot.img; do
+            [ -f "${OUT}/${f}" ] && cp -v "${OUT}/${f}" "${{ github.workspace }}/artifacts/" || true
+          done
+          ls -lh "${{ github.workspace }}/artifacts/"
+
+      - name: Upload artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: OrangeFox-14.1-beryl-vendor_boot
+          path: artifacts/
+          if-no-files-found: error
+          retention-days: 14

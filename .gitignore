@@ -1,0 +1,22 @@
+# Build outputs
+out/
+*.img
+*.zip
+*.log
+
+# Local overrides
+.env
+*.local
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Editor
+.idea/
+.vscode/
+*.swp
+*~
+
+# Temporary TWRP conversion state (should never be committed)
+.compat-state/
