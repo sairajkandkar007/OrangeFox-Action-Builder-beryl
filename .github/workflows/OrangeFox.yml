@@ -1,6 +1,6 @@
 # OrangeFox 16.0 builder for Xiaomi Beryl
 # Android 16 / BP2A / API 36
-# Final vendor_boot merge is performed manually.
+# Build only ramdisk-recovery.img; final vendor_boot assembly is manual.
 name: OrangeFox-16.0-beryl
 
 on:
@@ -53,9 +53,20 @@ jobs:
           sudo rm -rf /usr/share/dotnet /usr/local/lib/android /opt/ghc \
             /usr/local/share/boost /usr/share/swift /usr/local/.ghcup || true
           sudo apt-get clean
-          df -h
+          df -h /
 
-      - name: Build Environment (Pandora)\n        run: |\n          sudo apt install aria2 linux-modules-extra-$(uname -r) zram-tools -y\n          git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master\n          cd scripts\n          sudo bash setup/android_build_env.sh\n          cd .. && rm -rf scripts\n          sudo apt autoclean >/dev/null || true\n          sudo apt autoremove -qy 2>/dev/null || true\n          sudo rm -rf /var/cache/apt/archives/ 2>/dev/null || true\n\n      - name: Setup zram
+      - name: Build Environment (Pandora)
+        run: |
+          sudo apt install aria2 linux-modules-extra-$(uname -r) zram-tools -y
+          git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master
+          cd scripts
+          sudo bash setup/android_build_env.sh
+          cd .. && rm -rf scripts
+          sudo apt autoclean >/dev/null || true
+          sudo apt autoremove -qy 2>/dev/null || true
+          sudo rm -rf /var/cache/apt/archives/ 2>/dev/null || true
+
+      - name: Setup zram
         run: |
           sudo modprobe zram
           sudo sed -i 's/^#PERCENT=50/PERCENT=90/' /etc/default/zramswap
@@ -77,19 +88,27 @@ jobs:
           git config --global color.ui false
           git config --global trailer.sign.key ""
 
-      - name: Initialize OrangeFox 16.0 manifest
+      - name: Initialize official OrangeFox manifest
         run: |
           rm -rf "${FOX_PATH}"
           mkdir -p "${FOX_PATH}"
           cd "${FOX_PATH}"
-          repo init -u https://gitlab.com/OrangeFox/Manifest.git -b "${FOX_BRANCH}" --depth=1
+          repo init --depth=1 -u https://gitlab.com/OrangeFox/Manifest.git -b "${FOX_BRANCH}"
 
-      - name: Sync OrangeFox 16.0 sources
+      - name: Sync official OrangeFox sources (shallow/fast)
         run: |
           cd "${FOX_PATH}"
           REPO_JOBS="$(nproc --all)"
           echo "Using ${REPO_JOBS} parallel repo jobs"
-          repo sync --current-branch --no-tags --optimized-fetch --prune --force-sync --jobs="${REPO_JOBS}"
+          repo sync \
+            --current-branch \
+            --no-tags \
+            --optimized-fetch \
+            --prune \
+            --force-sync \
+            --no-clone-bundle \
+            --no-use-superproject \
+            --jobs="${REPO_JOBS}"
 
       - name: Clone device tree
         run: |
@@ -103,7 +122,6 @@ jobs:
           test -f BoardConfig.mk
           test -f AndroidProducts.mk
           test -f fox_beryl.mk
-          test -f twrp_beryl.mk || echo "WARNING: twrp_beryl.mk missing (OF build still OK)"
           test -f device.mk
 
       - name: Verify Android 16 BP2A configuration
@@ -122,7 +140,7 @@ jobs:
           ccache -z
           ccache -s
 
-      - name: Build recovery ramdisk
+      - name: Build recovery ramdisk only
         run: |
           cd "${FOX_PATH}"
           set +e
@@ -134,6 +152,7 @@ jobs:
           export CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache"
           export CCACHE_EXEC="$(command -v ccache)"
           export CCACHE_COMPRESS=1
+          export NOT_ORANGEFOX=1
           BUILD_JOBS="$(nproc --all)"
           echo "Using ${BUILD_JOBS} build jobs"
           : > "${GITHUB_WORKSPACE}/build.log"
@@ -149,30 +168,35 @@ jobs:
           set -e
           exit "${BUILD_STATUS}"
 
-      - name: Validate recovery output
+      - name: Validate recovery ramdisk
         if: success()
         run: |
           OUT="${FOX_PATH}/out/target/product/beryl"
-          test -f "${OUT}/ramdisk-recovery.img"
+          test -s "${OUT}/ramdisk-recovery.img"
+          echo "=== Recovery ramdisk ==="
           ls -lh "${OUT}/ramdisk-recovery.img"
           sha256sum "${OUT}/ramdisk-recovery.img"
+          echo "=== ccache ==="
           ccache -s || true
+          echo "=== disk ==="
           df -h /
 
       - name: Collect artifacts
         if: success()
         run: |
           OUT="${FOX_PATH}/out/target/product/beryl"
-          mkdir -p "${{ github.workspace }}/artifacts"
+          mkdir -p "${GITHUB_WORKSPACE}/artifacts"
           cp -v "${OUT}/ramdisk-recovery.img" "${GITHUB_WORKSPACE}/artifacts/"
           cp -v "${GITHUB_WORKSPACE}/build.log" "${GITHUB_WORKSPACE}/artifacts/"
+          printf 'artifact=ramdisk-recovery.img\nsha256=' > "${GITHUB_WORKSPACE}/artifacts/SHA256SUMS"
+          sha256sum "${OUT}/ramdisk-recovery.img" | awk '{print $1}' >> "${GITHUB_WORKSPACE}/artifacts/SHA256SUMS"
           ls -lh "${GITHUB_WORKSPACE}/artifacts/"
 
       - name: Upload artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: OrangeFox-16.0-beryl-recovery
+          name: OrangeFox-16.0-beryl-recovery-ramdisk
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
