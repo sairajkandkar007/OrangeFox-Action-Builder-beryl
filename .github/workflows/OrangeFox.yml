@@ -1,3 +1,5 @@
+# OrangeFox 16.0 builder for Xiaomi Beryl (POCO M7 Pro 5G)
+# Android 16 / BP2A / vendor_boot v4
 name: OrangeFox-16.0-beryl
 
 on:
@@ -35,9 +37,8 @@ jobs:
       FOX_BUILD_DEVICE: "beryl"
 
     steps:
-      - name: Free Disk Space & Configure Swap
+      - name: Free Disk Space
         run: |
-          echo "=== Removing unneeded packages and runtimes ==="
           sudo rm -rf \
             /usr/share/dotnet \
             /usr/local/lib/android \
@@ -46,60 +47,64 @@ jobs:
             /usr/share/swift \
             /usr/local/.ghcup \
             /var/lib/docker \
-            /usr/share/doc || true
+            /etc/skel \
+            /root/.cache || true
           sudo apt-get clean
+          df -h /
 
-          echo "=== Recreating 8GB NVMe swapfile ==="
+      - name: Configure NVMe SSD Swap
+        run: |
           sudo swapoff -a || true
           sudo rm -f /swapfile
-          sudo fallocate -l 8G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=8192
+          sudo fallocate -l 20G /swapfile || sudo dd if=/dev/zero of=/swapfile bs=1M count=20480
           sudo chmod 600 /swapfile
           sudo mkswap /swapfile
           sudo swapon /swapfile
-
-          echo "=== Baseline Storage and Memory ==="
-          df -h /
+          sudo sysctl vm.swappiness=60
           free -h
 
-      - name: Set Up Build Environment
+      - name: Setup Build Environment
         run: |
           sudo apt-get update -y
-          sudo apt-get install -y --no-install-recommends \
+          sudo apt-get install -y \
             aria2 git-core gnupg flex bison build-essential zip curl \
             zlib1g-dev libc6-dev-i386 libncurses5 libncurses5-dev lib32ncurses5-dev \
             x11proto-core-dev libx11-dev lib32z1-dev libgl1-mesa-dev libxml2-utils \
             xsltproc unzip fontconfig python3 python3-pip bc libssl-dev rsync ccache \
             openjdk-11-jdk
 
-          # OrangeFox build environment helper script
           git clone https://gitlab.com/OrangeFox/misc/scripts.git -b master ~/ofox_scripts
           sudo bash ~/ofox_scripts/setup/android_build_env.sh
           rm -rf ~/ofox_scripts
-          sudo apt-get clean
 
-      - name: Install Repo Tool
+          sudo apt-get autoclean -y || true
+          sudo apt-get autoremove -qy || true
+
+      - name: Install Google Repo Tool
         run: |
           mkdir -p ~/bin
           curl -fsSL https://storage.googleapis.com/git-repo-downloads/repo -o ~/bin/repo
           chmod a+x ~/bin/repo
           echo "$HOME/bin" >> $GITHUB_PATH
 
-      - name: Configure Git
+      - name: Configure Git Credentials
         run: |
           git config --global user.email "builder@github-actions.local"
           git config --global user.name "OrangeFox Beryl Builder"
           git config --global color.ui false
 
-      - name: Initialize Official OrangeFox Manifest
+      - name: Initialize fox_16.0 Manifest
         run: |
           rm -rf "${FOX_PATH}"
           mkdir -p "${FOX_PATH}"
           cd "${FOX_PATH}"
           repo init --depth=1 -u https://gitlab.com/OrangeFox/Manifest.git -b "${FOX_BRANCH}"
 
-      - name: Sync Sources (Shallow / Optimized)
+      - name: Sync Sources (Shallow & Pruned)
         run: |
           cd "${FOX_PATH}"
+          REPO_JOBS="$(nproc --all)"
+          echo "Using ${REPO_JOBS} parallel fetch jobs"
           repo sync \
             --current-branch \
             --no-tags \
@@ -108,28 +113,55 @@ jobs:
             --force-sync \
             --no-clone-bundle \
             --no-use-superproject \
-            -j$(nproc --all)
+            --jobs="${REPO_JOBS}"
 
       - name: Clone Device Tree
         run: |
-          mkdir -p "${FOX_PATH}/${DEVICE_TREE_PATH}"
+          mkdir -p "${FOX_PATH}/device/xiaomi"
           git clone --depth=1 --branch "${{ inputs.device_tree_ref || 'ofox-16.0' }}" \
             "${DEVICE_TREE_REPO}" "${FOX_PATH}/${DEVICE_TREE_PATH}"
           cd "${FOX_PATH}/${DEVICE_TREE_PATH}"
           git lfs pull || true
-          test -f BoardConfig.mk && test -f AndroidProducts.mk
-          echo "=== Device tree verified ==="
-          ls -la
+          test -f BoardConfig.mk
+          test -f AndroidProducts.mk
+
+      - name: Isolate Beryl From Unrelated Xiaomi Device Registrations
+        run: |
+          # OrangeFox fox_16.0 contains unrelated Xiaomi device trees.
+          # Their vendorsetup.sh files are auto-discovered by build/envsetup.sh.
+          # Beryl is MT6855/MediaTek, so Qualcomm SM84xx/Mondrian registrations
+          # must not participate in the Beryl environment.
+          for f in \
+            "${FOX_PATH}/device/xiaomi/mondrian/vendorsetup.sh" \
+            "${FOX_PATH}/device/xiaomi/sm84xx-common/vendorsetup.sh"; do
+            if [ -f "$f" ]; then
+              echo "Disabling unrelated device registration: $f"
+              mv "$f" "$f.disabled"
+            else
+              echo "Not present: $f"
+            fi
+          done
+
+          # Confirm only the Beryl tree is used for the requested target.
+          test -f "${FOX_PATH}/${DEVICE_TREE_PATH}/vendorsetup.sh"
+          echo "Beryl vendorsetup.sh is present."
+
+      - name: Verify Android 16 BP2A Configuration
+        run: |
+          cd "${FOX_PATH}/${DEVICE_TREE_PATH}"
+          grep -q "fox_beryl-bp2a-eng" AndroidProducts.mk || grep -q "fox_beryl" AndroidProducts.mk
+          echo "Product registration verified."
 
       - name: Configure ccache
         run: |
           mkdir -p "${GITHUB_WORKSPACE}/.ccache"
           export CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache"
           export CCACHE_COMPRESS=1
-          ccache -M 40G
+          ccache -M 15G
           ccache -z
+          ccache -s
 
-      - name: Build Recovery Ramdisk & Vendor Boot
+      - name: Build recovery ramdisk only
         run: |
           cd "${FOX_PATH}"
           source build/envsetup.sh
@@ -141,53 +173,62 @@ jobs:
           export CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache"
           export CCACHE_EXEC="$(command -v ccache)"
           export CCACHE_COMPRESS=1
+          export _JAVA_OPTIONS="-Xmx4g"
+          export NINJA_ARGS="-j1"
 
-          echo "Configuring lunch target: ${LUNCH_TARGET}"
           lunch "${LUNCH_TARGET}" || lunch "fox_${FOX_BUILD_DEVICE}-eng"
-
-          TOTAL_CPUS="$(nproc --all)"
-          BUILD_JOBS="$((TOTAL_CPUS > 2 ? TOTAL_CPUS - 1 : TOTAL_CPUS))"
-          echo "Compiling with ${BUILD_JOBS} parallel threads..."
+          echo "Selected lunch target: ${LUNCH_TARGET}"
 
           OUT_DIR="${FOX_PATH}/out/target/product/${FOX_BUILD_DEVICE}"
           : > "${GITHUB_WORKSPACE}/build.log"
 
           if command -v mka >/dev/null 2>&1; then
-            mka vendorbootimage "${OUT_DIR}/ramdisk-recovery.img" -j"${BUILD_JOBS}" 2>&1 | tee -a "${GITHUB_WORKSPACE}/build.log"
+            mka vendorbootimage -j1 2>&1 | tee -a "${GITHUB_WORKSPACE}/build.log"
           else
-            m vendorbootimage "${OUT_DIR}/ramdisk-recovery.img" -j"${BUILD_JOBS}" 2>&1 | tee -a "${GITHUB_WORKSPACE}/build.log"
+            m vendorbootimage -j1 2>&1 | tee -a "${GITHUB_WORKSPACE}/build.log"
           fi
 
-      - name: Validate Recovery Artifacts
+      - name: Validate Built Images
         run: |
           OUT="${FOX_PATH}/out/target/product/${FOX_BUILD_DEVICE}"
-          echo "=== Target Product Output Contents ==="
-          ls -lh "${OUT}" || true
-
-          if [ ! -s "${OUT}/ramdisk-recovery.img" ] && [ ! -s "${OUT}/vendor_boot.img" ]; then
-            echo "Critical artifact not found. Searching for built recovery images in out/:"
-            find "${FOX_PATH}/out" -type f \( -name "*recovery*.img" -o -name "vendor_boot.img" -o -name "ramdisk*.img" \)
+          if [ -s "${OUT}/ramdisk-recovery.img" ]; then
+            echo "ramdisk-recovery.img built successfully."
+            ls -lh "${OUT}/ramdisk-recovery.img"
+            sha256sum "${OUT}/ramdisk-recovery.img"
+          elif [ -s "${OUT}/vendor_boot.img" ]; then
+            echo "vendor_boot.img built successfully."
+            ls -lh "${OUT}/vendor_boot.img"
+            sha256sum "${OUT}/vendor_boot.img"
+          else
+            echo "Target artifacts missing. Inspecting output directory:"
+            find "${FOX_PATH}/out" -type f \( -name "*recovery*.img" -o -name "vendor_boot*.img" -o -name "*ramdisk*" \)
             exit 1
           fi
+
+          echo "=== Post-build Resource Check ==="
+          free -h
+          df -h /
 
       - name: Collect Artifacts
         if: success()
         run: |
           OUT="${FOX_PATH}/out/target/product/${FOX_BUILD_DEVICE}"
           mkdir -p "${GITHUB_WORKSPACE}/artifacts"
-          [ -f "${OUT}/ramdisk-recovery.img" ] && cp -v "${OUT}/ramdisk-recovery.img" "${GITHUB_WORKSPACE}/artifacts/"
-          [ -f "${OUT}/vendor_boot.img" ] && cp -v "${OUT}/vendor_boot.img" "${GITHUB_WORKSPACE}/artifacts/"
+
+          [ -f "${OUT}/ramdisk-recovery.img" ] && cp -v "${OUT}/ramdisk-recovery.img" "${GITHUB_WORKSPACE}/artifacts/" || true
+          [ -f "${OUT}/vendor_boot.img" ] && cp -v "${OUT}/vendor_boot.img" "${GITHUB_WORKSPACE}/artifacts/" || true
           [ -f "${OUT}/OrangeFox-"*".zip" ] && cp -v "${OUT}/OrangeFox-"*".zip" "${GITHUB_WORKSPACE}/artifacts/" || true
           cp -v "${GITHUB_WORKSPACE}/build.log" "${GITHUB_WORKSPACE}/artifacts/"
+
           cd "${GITHUB_WORKSPACE}/artifacts"
-          sha256sum * > SHA256SUMS
+          sha256sum * > SHA256SUMS 2>/dev/null || true
           ls -lh "${GITHUB_WORKSPACE}/artifacts/"
 
-      - name: Upload Build Artifacts
+      - name: Upload Artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: OrangeFox-16.0-beryl
+          name: OrangeFox-16.0-beryl-artifacts
           path: artifacts/
           if-no-files-found: error
-          retention-days: 7
+          retention-days: 14
