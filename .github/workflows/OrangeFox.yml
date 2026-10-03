@@ -1,6 +1,6 @@
 # OrangeFox 14.1 builder for Xiaomi Beryl (vendor_boot recovery)
 # Device tree: sairajkandkar007/android_device_xiaomi_beryl_ofox16
-# Lunch: fox_beryl-bp2a-eng
+# Lunch: fox_beryl-ap2a-eng
 # Output: vendor_boot.img
 #
 name: OrangeFox-14.1-beryl
