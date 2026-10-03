@@ -32,7 +32,7 @@ jobs:
       FOX_PATH: ${{ github.workspace }}/fox_14.1
       DEVICE_TREE_REPO: "https://github.com/sairajkandkar007/android_device_xiaomi_beryl_ofox16.git"
       DEVICE_TREE_PATH: "device/xiaomi/beryl"
-      LUNCH_TARGET: "fox_beryl-bp2a-eng"
+      LUNCH_TARGET: "fox_beryl-ap2a-eng"
       FOX_BUILD_DEVICE: "beryl"
 
     steps:
@@ -93,6 +93,14 @@ jobs:
           test -f fox_beryl.mk
           test -f twrp_beryl.mk || echo "WARNING: twrp_beryl.mk missing (OF build still OK)"
           test -f device.mk
+
+      - name: Prepare OFOX 14.1 AP2A compatibility alias
+        run: |
+          cd "${FOX_PATH}/${DEVICE_TREE_PATH}"
+          # Keep the source tree itself BP2A. OFOX 14.1 uses AP2A as its
+          # release-config selector for Android 16 device trees.
+          sed -i 's/\\-bp2a-eng/\\-ap2a-eng/g' AndroidProducts.mk
+          grep -n -E 'fox_beryl-(ap2a|bp2a)-eng|twrp_beryl-(ap2a|bp2a)-eng' AndroidProducts.mk
 
       - name: Verify lunch product registration
         run: |
