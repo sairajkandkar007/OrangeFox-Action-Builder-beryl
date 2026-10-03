@@ -1,9 +1,7 @@
-# OrangeFox 14.1 builder for Xiaomi Beryl (vendor_boot recovery)
-# Device tree: sairajkandkar007/android_device_xiaomi_beryl_ofox16
-# Lunch: fox_beryl-ap2a-eng
-# Output: vendor_boot.img
-#
-name: OrangeFox-14.1-beryl
+# OrangeFox 16.0 builder for Xiaomi Beryl
+# Android 16 / BP2A / API 36
+# Final vendor_boot merge is performed manually.
+name: OrangeFox-16.0-beryl
 
 on:
   workflow_dispatch:
@@ -18,21 +16,22 @@ on:
         default: "eng"
 
 concurrency:
-  group: ofox-beryl-${{ github.ref }}
+  group: ofox16-beryl-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
   build:
-    name: Build OrangeFox fox_14.1 (beryl)
-    runs-on: ubuntu-24.04
+    name: Build OrangeFox fox_16.0 (beryl)
+    runs-on:
+      labels: ubuntu-24.04-8core
     timeout-minutes: 360
 
     env:
-      FOX_BRANCH: "14.1"
-      FOX_PATH: ${{ github.workspace }}/fox_14.1
+      FOX_BRANCH: "fox_16.0"
+      FOX_PATH: ${{ github.workspace }}/orangefox_16
       DEVICE_TREE_REPO: "https://github.com/sairajkandkar007/android_device_xiaomi_beryl_ofox16.git"
       DEVICE_TREE_PATH: "device/xiaomi/beryl"
-      LUNCH_TARGET: "fox_beryl-ap2a-eng"
+      LUNCH_TARGET: "fox_beryl-bp2a-eng"
       FOX_BUILD_DEVICE: "beryl"
 
     steps:
@@ -70,14 +69,19 @@ jobs:
           git config --global color.ui false
           git config --global trailer.sign.key ""
 
-      - name: Clone OrangeFox sync tooling
+      - name: Initialize OrangeFox 16.0 manifest
         run: |
-          git clone --depth=1 https://gitlab.com/OrangeFox/sync.git "${{ github.workspace }}/OrangeFox_sync"
+          rm -rf "${FOX_PATH}"
+          mkdir -p "${FOX_PATH}"
+          cd "${FOX_PATH}"
+          repo init -u https://gitlab.com/OrangeFox/Manifest.git -b "${FOX_BRANCH}" --depth=1
 
-      - name: Sync OrangeFox 14.1 sources
+      - name: Sync OrangeFox 16.0 sources
         run: |
-          cd "${{ github.workspace }}/OrangeFox_sync"
-          ./orangefox_sync.sh --branch "${FOX_BRANCH}" --path "${FOX_PATH}"
+          cd "${FOX_PATH}"
+          REPO_JOBS="$(nproc --all)"
+          echo "Using ${REPO_JOBS} parallel repo jobs"
+          repo sync --current-branch --no-tags --optimized-fetch --prune --force-sync --jobs="${REPO_JOBS}"
 
       - name: Clone device tree
         run: |
@@ -108,7 +112,16 @@ jobs:
           grep -q "fox_beryl" AndroidProducts.mk
           echo "AndroidProducts.mk OK for OrangeFox"
 
-      - name: Build vendorbootimage
+      - name: Configure ccache
+        run: |
+          mkdir -p "${GITHUB_WORKSPACE}/.ccache"
+          export CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache"
+          export CCACHE_COMPRESS=1
+          ccache -M 120G
+          ccache -z
+          ccache -s
+
+      - name: Build recovery ramdisk
         run: |
           cd "${FOX_PATH}"
           set +e
@@ -116,37 +129,49 @@ jobs:
           export ALLOW_MISSING_DEPENDENCIES=true
           export LC_ALL=C
           export FOX_BUILD_DEVICE="${FOX_BUILD_DEVICE}"
-          lunch "${LUNCH_TARGET}"
-          mka adbd vendorbootimage -j"$(nproc --all)"
-          RC=$?
-          set -e
-          if [ $RC -ne 0 ]; then
-            echo "Build failed with exit code $RC"
-            exit $RC
+          export USE_CCACHE=1
+          export CCACHE_DIR="${GITHUB_WORKSPACE}/.ccache"
+          export CCACHE_EXEC="$(command -v ccache)"
+          export CCACHE_COMPRESS=1
+          BUILD_JOBS="$(nproc --all)"
+          echo "Using ${BUILD_JOBS} build jobs"
+          : > "${GITHUB_WORKSPACE}/build.log"
+          BUILD_STATUS=1
+          if command -v mka >/dev/null 2>&1; then
+            mka recoveryimage -j"${BUILD_JOBS}" 2>&1 | tee -a "${GITHUB_WORKSPACE}/build.log"
+            BUILD_STATUS=${PIPESTATUS[0]}
           fi
+          if [ "${BUILD_STATUS}" -ne 0 ]; then
+            m recoveryimage -j"${BUILD_JOBS}" 2>&1 | tee -a "${GITHUB_WORKSPACE}/build.log"
+            BUILD_STATUS=${PIPESTATUS[0]}
+          fi
+          set -e
+          exit "${BUILD_STATUS}"
+
+      - name: Validate recovery output
+        if: success()
+        run: |
+          OUT="${FOX_PATH}/out/target/product/beryl"
+          test -f "${OUT}/ramdisk-recovery.img"
+          ls -lh "${OUT}/ramdisk-recovery.img"
+          sha256sum "${OUT}/ramdisk-recovery.img"
+          ccache -s || true
+          df -h /
 
       - name: Collect artifacts
         if: success()
         run: |
           OUT="${FOX_PATH}/out/target/product/beryl"
           mkdir -p "${{ github.workspace }}/artifacts"
-          if [ -f "${OUT}/vendor_boot.img" ]; then
-            cp -v "${OUT}/vendor_boot.img" "${{ github.workspace }}/artifacts/"
-          else
-            echo "ERROR: vendor_boot.img not found"
-            find "${FOX_PATH}/out/target/product" -name "*.img" 2>/dev/null | head -50
-            exit 1
-          fi
-          for f in recovery.img boot.img; do
-            [ -f "${OUT}/${f}" ] && cp -v "${OUT}/${f}" "${{ github.workspace }}/artifacts/" || true
-          done
-          ls -lh "${{ github.workspace }}/artifacts/"
+          cp -v "${OUT}/ramdisk-recovery.img" "${GITHUB_WORKSPACE}/artifacts/"
+          cp -v "${GITHUB_WORKSPACE}/build.log" "${GITHUB_WORKSPACE}/artifacts/"
+          ls -lh "${GITHUB_WORKSPACE}/artifacts/"
 
       - name: Upload artifacts
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: OrangeFox-14.1-beryl-vendor_boot
+          name: OrangeFox-16.0-beryl-recovery
           path: artifacts/
           if-no-files-found: error
           retention-days: 14
