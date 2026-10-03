@@ -21,7 +21,7 @@ on:
 
 concurrency:
   group: ofox16-beryl-${{ github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 jobs:
   build:
@@ -159,8 +159,18 @@ jobs:
           export NOT_ORANGEFOX=1
           lunch "${LUNCH_TARGET}"
           echo "Selected lunch target: ${LUNCH_TARGET}"
-          BUILD_JOBS="$(nproc --all)"
+          TOTAL_CPUS="$(nproc --all)"
+          if [ "${TOTAL_CPUS}" -gt 2 ]; then
+            BUILD_JOBS="$((TOTAL_CPUS - 1))"
+          else
+            BUILD_JOBS="${TOTAL_CPUS}"
+          fi
+          echo "Total CPUs: ${TOTAL_CPUS}"
           echo "Using ${BUILD_JOBS} build jobs"
+          echo "=== Pre-build resources ==="
+          free -h
+          zramctl || true
+          df -h /
           : > "${GITHUB_WORKSPACE}/build.log"
           BUILD_STATUS=1
           if command -v mka >/dev/null 2>&1; then
@@ -171,6 +181,10 @@ jobs:
             m recoveryimage -j"${BUILD_JOBS}" 2>&1 | tee -a "${GITHUB_WORKSPACE}/build.log"
             BUILD_STATUS=${PIPESTATUS[0]}
           fi
+          echo "=== Post-build resources ==="
+          free -h
+          zramctl || true
+          df -h /
           set -e
           exit "${BUILD_STATUS}"
 
