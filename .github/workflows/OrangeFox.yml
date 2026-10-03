@@ -146,6 +146,16 @@ jobs:
           test -f "${FOX_PATH}/${DEVICE_TREE_PATH}/vendorsetup.sh"
           echo "Beryl vendorsetup.sh is present."
 
+      - name: Patch CTS Android 16 Release Metadata
+        run: |
+          cd "${FOX_PATH}"
+          CTS_RELEASES="cts/tests/tests/os/assets/platform_releases.txt"
+          test -f "$CTS_RELEASES"
+          if ! grep -qxF "16.0.0" "$CTS_RELEASES"; then
+            echo "Adding Android 16.0.0 to CTS platform release metadata for OFOX 16 build compatibility."
+            printf '%s\n' "16.0.0" >> "$CTS_RELEASES"
+          fi
+          grep -qxF "16.0.0" "$CTS_RELEASES"
       - name: Verify Android 16 BP2A Configuration
         run: |
           cd "${FOX_PATH}/${DEVICE_TREE_PATH}"
